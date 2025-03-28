@@ -1,0 +1,14 @@
+[package]
+name = "p2p-chat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+crossterm = "0.28.1"
+futures = "0.3.31"
+libp2p = {version="0.55.0",features = [ "tokio", "gossipsub", "mdns", "noise", "macros", "tcp", "yamux", "quic"]}
+rand = "0.9.0"
+tokio = {version="1.44.1",features=["full"]}
+tracing-subscriber = {version="0.3.19",features=["env-filter"]}
+tui = {version="0.19.0",features=["crossterm"]}
