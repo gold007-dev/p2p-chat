@@ -2,28 +2,29 @@ use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::stream::StreamExt;
 use libp2p::{
-    gossipsub, mdns, noise,
+    PeerId, gossipsub, mdns, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, PeerId,
+    tcp, yamux,
 };
+use notify_rust::{Notification, Timeout};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::{sync::mpsc, task};
 use tui::{
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     text::Text,
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
 };
-use tokio::{sync::mpsc, task};
 
 #[derive(NetworkBehaviour)]
 struct ChatBehaviour {
@@ -52,9 +53,11 @@ async fn main() -> Result<()> {
     // Channels für die Kommunikation zwischen Tasks
     let (ui_tx, mut ui_rx) = mpsc::channel(100);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(100);
-    
+
     let state = Arc::new(Mutex::new(AppState::new(
-        libp2p::identity::Keypair::generate_ed25519().public().to_peer_id()
+        libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id(),
     )));
 
     // Terminal Setup
@@ -77,7 +80,9 @@ async fn main() -> Result<()> {
             let message_id_fn = |message: &gossipsub::Message| {
                 let mut s = DefaultHasher::new();
                 message.data.hash(&mut s);
-                gossipsub::MessageId::from(((s.finish() as u128)*(rand::random::<u8>() as u128)).to_string())
+                gossipsub::MessageId::from(
+                    ((s.finish() as u128) * (rand::random::<u8>() as u128)).to_string(),
+                )
             };
 
             let gossipsub_config = gossipsub::ConfigBuilder::default()
@@ -92,10 +97,8 @@ async fn main() -> Result<()> {
                 gossipsub_config,
             )?;
 
-            let mdns = mdns::tokio::Behaviour::new(
-                mdns::Config::default(),
-                key.public().to_peer_id(),
-            )?;
+            let mdns =
+                mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
             Ok(ChatBehaviour { gossipsub, mdns })
         })?
         .build();
@@ -128,8 +131,18 @@ async fn main() -> Result<()> {
                         message,
                         ..
                     })) => {
-                        let msg = format!("{}: {}", peer_id, String::from_utf8_lossy(&message.data));
+                        let message=String::from_utf8_lossy(&message.data);
+                        let msg = format!("{}: {}", peer_id, message);
                         ui_tx.send(msg).await.unwrap();
+                        Notification::new()
+                            .summary("p2p-chat")
+                            .body(&message)
+                            .icon("bell")
+                            .appname("p2p-chat")
+                            // .hint(Hint::Category("email".to_owned()))
+                            // .hint(Hint::Resident(true)) // this is not supported by all implementations
+                            .timeout(Timeout::Never) // this however is
+                            .show().unwrap();
                     },
                     SwarmEvent::NewListenAddr { address, .. } => {
                         let mut s = network_state.lock().unwrap();
@@ -168,7 +181,9 @@ async fn main() -> Result<()> {
                             }
                         }
                         KeyCode::Char(c) => s.input.push(c),
-                        KeyCode::Backspace => { s.input.pop(); }
+                        KeyCode::Backspace => {
+                            s.input.pop();
+                        }
                         KeyCode::Esc => break,
                         _ => {}
                     }
@@ -209,9 +224,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, state: &AppState) {
         .map(|m| ListItem::new(m.as_str()))
         .collect();
 
-    let list = List::new(messages)
-        .block(Block::default().title("Chat").borders(Borders::ALL));
-    
+    let list = List::new(messages).block(Block::default().title("Chat").borders(Borders::ALL));
+
     let input = Paragraph::new(Text::from(state.input.as_str()))
         .block(Block::default().title("Input").borders(Borders::ALL));
 
